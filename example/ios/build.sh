@@ -75,16 +75,34 @@ do
 done
 
 produced_dylibs=(install-*/lib/libtdjson.dylib)
+list=(install-*)
+
 xcodebuild_frameworks=()
 
-for dylib in "${produced_dylibs[@]}";
+for lib in "${list[@]}";
 do
+  dylib=${lib}/lib/libtdjson.dylib
   xcodebuild_frameworks+=(-library $(grealpath "${dylib}"))
+  xcodebuild_frameworks+=(-headers $(grealpath "${lib}/include"))
 done
 
+rm -rf libtdjson.xcframework
 # Make xcframework
 xcodebuild -create-xcframework \
     "${xcodebuild_frameworks[@]}" \
     -output "libtdjson.xcframework"
 
+rm -rf ../tdjson/libtdjson.xcframework
 rsync --recursive libtdjson.xcframework ../tdjson/
+
+# Rename and fix plist. Remove versions from filenames
+index=0
+for lib in "${list[@]}";
+do
+  ident=$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:$index:LibraryIdentifier" ../tdjson/libtdjson.xcframework/Info.plist)
+  old_name=$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:$index:LibraryPath" ../tdjson/libtdjson.xcframework/Info.plist)
+  new_name=libtdjson.dylib
+  /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$index:LibraryPath $new_name" ../tdjson/libtdjson.xcframework/Info.plist
+  mv ../tdjson/libtdjson.xcframework/$ident/$old_name ../tdjson/libtdjson.xcframework/$ident/$new_name
+  index=`expr $index + 1`
+done
