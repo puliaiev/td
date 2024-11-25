@@ -22,7 +22,7 @@ set_cmake_options () {
 }
 
 platforms="macOS iOS watchOS tvOS"
-#platforms="watchOS"
+platforms="macOS"
 for platform in $platforms;
 do
   echo "Platform = ${platform}"
