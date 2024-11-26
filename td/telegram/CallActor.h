@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,6 +9,7 @@
 #include "td/telegram/CallDiscardReason.h"
 #include "td/telegram/CallId.h"
 #include "td/telegram/DhConfig.h"
+#include "td/telegram/files/FileUploadId.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
@@ -17,9 +18,10 @@
 #include "td/mtproto/DhHandshake.h"
 
 #include "td/actor/actor.h"
-#include "td/actor/PromiseFuture.h"
 
+#include "td/utils/common.h"
 #include "td/utils/Container.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Status.h"
 
 #include <memory>
@@ -54,6 +56,7 @@ struct CallConnection {
 
   // Telegram
   string peer_tag;
+  bool is_tcp = false;
 
   // WebRTC
   string username;
@@ -76,11 +79,13 @@ struct CallState {
   bool is_received{false};
   bool need_debug_information{false};
   bool need_rating{false};
+  bool need_log{false};
 
   int64 key_fingerprint{0};
   string key;
   string config;
   vector<string> emojis_fingerprint;
+  string custom_parameters;
   bool allow_p2p{false};
 
   Status error;
@@ -94,13 +99,14 @@ class CallActor final : public NetQueryCallback {
 
   void create_call(UserId user_id, tl_object_ptr<telegram_api::InputUser> &&input_user, CallProtocol &&protocol,
                    bool is_video, Promise<CallId> &&promise);
-  void accept_call(CallProtocol &&protocol, Promise<> promise);
+  void accept_call(CallProtocol &&protocol, Promise<Unit> promise);
   void update_call_signaling_data(string data);
-  void send_call_signaling_data(string &&data, Promise<> promise);
-  void discard_call(bool is_disconnected, int32 duration, bool is_video, int64 connection_id, Promise<> promise);
+  void send_call_signaling_data(string &&data, Promise<Unit> promise);
+  void discard_call(bool is_disconnected, int32 duration, bool is_video, int64 connection_id, Promise<Unit> promise);
   void rate_call(int32 rating, string comment, vector<td_api::object_ptr<td_api::CallProblem>> &&problems,
-                 Promise<> promise);
-  void send_call_debug_information(string data, Promise<> promise);
+                 Promise<Unit> promise);
+  void send_call_debug_information(string data, Promise<Unit> promise);
+  void send_call_log(td_api::object_ptr<td_api::InputFile> log_file, Promise<Unit> promise);
 
   void update_call(tl_object_ptr<telegram_api::PhoneCall> call);
 
@@ -125,6 +131,7 @@ class CallActor final : public NetQueryCallback {
     WaitAcceptResult,
     SendConfirmQuery,
     WaitConfirmResult,
+    Ready,
     SendDiscardQuery,
     WaitDiscardResult,
     Discarded
@@ -142,7 +149,6 @@ class CallActor final : public NetQueryCallback {
   bool has_notification_{false};
   int64 call_access_hash_{0};
   UserId call_admin_user_id_;
-  // UserId call_participant_user_id_;
 
   CallState call_state_;
   bool call_state_need_flush_{false};
@@ -155,12 +161,14 @@ class CallActor final : public NetQueryCallback {
   void on_dh_config(Result<std::shared_ptr<DhConfig>> r_dh_config, bool dummy);
   void do_load_dh_config(Promise<std::shared_ptr<DhConfig>> promise);
 
-  Status do_update_call(telegram_api::phoneCallEmpty &call);
-  Status do_update_call(telegram_api::phoneCallWaiting &call);
-  Status do_update_call(telegram_api::phoneCallRequested &call);
-  Status do_update_call(telegram_api::phoneCallAccepted &call);
-  Status do_update_call(telegram_api::phoneCall &call);
-  Status do_update_call(telegram_api::phoneCallDiscarded &call);
+  Status do_update_call(const telegram_api::phoneCallEmpty &call);
+  Status do_update_call(const telegram_api::phoneCallWaiting &call);
+  Status do_update_call(const telegram_api::phoneCallRequested &call);
+  Status do_update_call(const telegram_api::phoneCallAccepted &call);
+  Status do_update_call(const telegram_api::phoneCall &call);
+  Status do_update_call(const telegram_api::phoneCallDiscarded &call);
+
+  void on_get_call_id();
 
   void send_received_query();
   void on_received_query_result(Result<NetQueryPtr> r_net_query);
@@ -182,7 +190,20 @@ class CallActor final : public NetQueryCallback {
   void on_call_discarded(CallDiscardReason reason, bool need_rating, bool need_debug, bool is_video);
 
   void on_set_rating_query_result(Result<NetQueryPtr> r_net_query);
-  void on_set_debug_query_result(Result<NetQueryPtr> r_net_query);
+
+  void on_save_debug_query_result(Result<NetQueryPtr> r_net_query);
+
+  void upload_log_file(FileUploadId file_upload_id, Promise<Unit> &&promise);
+
+  void on_upload_log_file(FileUploadId file_upload_id, Promise<Unit> &&promise,
+                          telegram_api::object_ptr<telegram_api::InputFile> input_file);
+
+  void on_upload_log_file_error(FileUploadId file_upload_id, Promise<Unit> &&promise, Status status);
+
+  void do_upload_log_file(FileUploadId file_upload_id, telegram_api::object_ptr<telegram_api::InputFile> &&input_file,
+                          Promise<Unit> &&promise);
+
+  void on_save_log_query_result(FileUploadId file_upload_id, Promise<Unit> promise, Result<NetQueryPtr> r_net_query);
 
   void on_get_call_config_result(Result<NetQueryPtr> r_net_query);
 
